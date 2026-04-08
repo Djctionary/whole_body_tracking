@@ -10,6 +10,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+from dataclasses import MISSING
 import numpy as np
 
 from isaaclab.app import AppLauncher
@@ -30,6 +31,9 @@ parser.add_argument(
 )
 parser.add_argument("--output_name", type=str, required=True, help="The name of the motion npz file.")
 parser.add_argument("--output_fps", type=int, default=50, help="The fps of the output motion.")
+parser.add_argument("--robot", type=str, choices=("g1", "spot"), default="spot", help="Robot configuration to use.")
+parser.add_argument("--output_file", type=str, default="/tmp/motion.npz", help="Local path for the exported motion NPZ.")
+parser.add_argument("--disable_wandb", action="store_true", help="Skip uploading the generated motion to Weights & Biases.")
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -56,6 +60,45 @@ from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul, 
 # Pre-defined configs
 ##
 from whole_body_tracking.robots.g1 import G1_CYLINDER_CFG
+from whole_body_tracking.robots.spot import SPOT_CFG, SPOT_JOINT_NAMES
+
+
+G1_JOINT_NAMES = [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+]
+
+ROBOT_CONFIGS = {
+    "g1": {"cfg": G1_CYLINDER_CFG, "joint_names": G1_JOINT_NAMES},
+    "spot": {"cfg": SPOT_CFG, "joint_names": SPOT_JOINT_NAMES},
+}
 
 
 @configclass
@@ -75,7 +118,7 @@ class ReplayMotionsSceneCfg(InteractiveSceneCfg):
     )
 
     # articulation
-    robot: ArticulationCfg = G1_CYLINDER_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = MISSING
 
 
 class MotionLoader:
@@ -84,12 +127,14 @@ class MotionLoader:
         motion_file: str,
         input_fps: int,
         output_fps: int,
+        expected_dofs: int,
         device: torch.device,
         frame_range: tuple[int, int] | None,
     ):
         self.motion_file = motion_file
         self.input_fps = input_fps
         self.output_fps = output_fps
+        self.expected_dofs = expected_dofs
         self.input_dt = 1.0 / self.input_fps
         self.output_dt = 1.0 / self.output_fps
         self.current_idx = 0
@@ -117,6 +162,11 @@ class MotionLoader:
         self.motion_base_rots_input = motion[:, 3:7]
         self.motion_base_rots_input = self.motion_base_rots_input[:, [3, 0, 1, 2]]  # convert to wxyz
         self.motion_dof_poss_input = motion[:, 7:]
+        if self.motion_dof_poss_input.shape[1] != self.expected_dofs:
+            raise ValueError(
+                f"Expected {self.expected_dofs} DOF columns for robot '{args_cli.robot}', "
+                f"but found {self.motion_dof_poss_input.shape[1]} in '{self.motion_file}'."
+            )
 
         self.input_frames = motion.shape[0]
         self.duration = (self.input_frames - 1) * self.input_dt
@@ -222,6 +272,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
         motion_file=args_cli.input_file,
         input_fps=args_cli.input_fps,
         output_fps=args_cli.output_fps,
+        expected_dofs=len(joint_names),
         device=sim.device,
         frame_range=args_cli.frame_range,
     )
@@ -298,17 +349,21 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
             ):
                 log[k] = np.stack(log[k], axis=0)
 
-            np.savez("/tmp/motion.npz", **log)
+            np.savez(args_cli.output_file, **log)
+            print(f"[INFO]: Motion saved locally to: {args_cli.output_file}")
 
-            import wandb
+            if not args_cli.disable_wandb:
+                import wandb
 
-            COLLECTION = args_cli.output_name
-            run = wandb.init(project="csv_to_npz", name=COLLECTION)
-            print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
-            REGISTRY = "motions"
-            logged_artifact = run.log_artifact(artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY)
-            run.link_artifact(artifact=logged_artifact, target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}")
-            print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+                collection = args_cli.output_name
+                run = wandb.init(project="csv_to_npz", name=collection)
+                print(f"[INFO]: Logging motion to wandb: {collection}")
+                registry = "motions"
+                logged_artifact = run.log_artifact(
+                    artifact_or_path=args_cli.output_file, name=collection, type=registry
+                )
+                run.link_artifact(artifact=logged_artifact, target_path=f"wandb-registry-{registry}/{collection}")
+                print(f"[INFO]: Motion saved to wandb registry: {registry}/{collection}")
 
 
 def main():
@@ -318,7 +373,9 @@ def main():
     sim_cfg.dt = 1.0 / args_cli.output_fps
     sim = SimulationContext(sim_cfg)
     # Design scene
+    robot_config = ROBOT_CONFIGS[args_cli.robot]
     scene_cfg = ReplayMotionsSceneCfg(num_envs=1, env_spacing=2.0)
+    scene_cfg.robot = robot_config["cfg"].replace(prim_path="{ENV_REGEX_NS}/Robot")
     scene = InteractiveScene(scene_cfg)
     # Play the simulator
     sim.reset()
@@ -328,37 +385,7 @@ def main():
     run_simulator(
         sim,
         scene,
-        joint_names=[
-            "left_hip_pitch_joint",
-            "left_hip_roll_joint",
-            "left_hip_yaw_joint",
-            "left_knee_joint",
-            "left_ankle_pitch_joint",
-            "left_ankle_roll_joint",
-            "right_hip_pitch_joint",
-            "right_hip_roll_joint",
-            "right_hip_yaw_joint",
-            "right_knee_joint",
-            "right_ankle_pitch_joint",
-            "right_ankle_roll_joint",
-            "waist_yaw_joint",
-            "waist_roll_joint",
-            "waist_pitch_joint",
-            "left_shoulder_pitch_joint",
-            "left_shoulder_roll_joint",
-            "left_shoulder_yaw_joint",
-            "left_elbow_joint",
-            "left_wrist_roll_joint",
-            "left_wrist_pitch_joint",
-            "left_wrist_yaw_joint",
-            "right_shoulder_pitch_joint",
-            "right_shoulder_roll_joint",
-            "right_shoulder_yaw_joint",
-            "right_elbow_joint",
-            "right_wrist_roll_joint",
-            "right_wrist_pitch_joint",
-            "right_wrist_yaw_joint",
-        ],
+        joint_names=robot_config["joint_names"],
     )
 
 
