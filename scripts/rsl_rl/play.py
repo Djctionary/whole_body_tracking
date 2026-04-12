@@ -110,6 +110,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
 
+        if args_cli.motion_file is not None:
+            env_cfg.commands.motion.motion_file = os.path.abspath(args_cli.motion_file)
+        else:
+            raise ValueError("Either --motion_file or --wandb_path must be provided.")
+
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
