@@ -18,7 +18,9 @@ from isaaclab.app import AppLauncher
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Replay converted motions.")
 parser.add_argument("--registry_name", type=str, default=None, help="The name of the wand registry.")
-parser.add_argument("--robot", type=str, choices=("g1", "spot"), default="spot", help="Robot configuration to use.")
+parser.add_argument(
+    "--robot", type=str, choices=("g1", "spot", "nao"), default="spot", help="Robot configuration to use."
+)
 parser.add_argument("--motion_file", type=str, default=None, help="Optional local motion NPZ path to replay.")
 
 # append AppLauncher cli args
@@ -43,6 +45,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 # Pre-defined configs
 ##
 from whole_body_tracking.robots.g1 import G1_CYLINDER_CFG
+from whole_body_tracking.robots.nao import NAO_CFG
 from whole_body_tracking.robots.spot import SPOT_CFG
 from whole_body_tracking.tasks.tracking.mdp import MotionLoader
 
@@ -50,6 +53,7 @@ from whole_body_tracking.tasks.tracking.mdp import MotionLoader
 ROBOT_CONFIGS = {
     "g1": G1_CYLINDER_CFG,
     "spot": SPOT_CFG,
+    "nao": NAO_CFG,
 }
 
 

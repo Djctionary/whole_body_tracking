@@ -2,8 +2,9 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
+from whole_body_tracking.assets import ASSET_DIR
 
-SPOT_URDF_PATH = "/home/vergil/MENU/Projects/AnimaSpot/urdf/isaacsim_spot/spot.urdf"
+SPOT_URDF_PATH = f"{ASSET_DIR}/spot/spot.urdf"
 
 SPOT_JOINT_NAMES = [
     "fl_hx",
