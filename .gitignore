@@ -39,5 +39,10 @@ _build
 *.pkl
 *.zarr
 *.npz
+!motions/
+!motions/trainable/
+!motions/trainable/nao/
+!motions/trainable/spot/
+!motions/trainable/**/*.npz
 
 artifacts/
