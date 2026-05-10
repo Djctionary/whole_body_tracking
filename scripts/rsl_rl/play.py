@@ -20,6 +20,12 @@ parser.add_argument(
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--motion_file", type=str, default=None, help="Path to the motion file.")
+parser.add_argument(
+    "--no_debug_vis",
+    action="store_true",
+    default=False,
+    help="Disable motion-command frame markers and contact-sensor debug visualization.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -114,6 +120,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             env_cfg.commands.motion.motion_file = os.path.abspath(args_cli.motion_file)
         else:
             raise ValueError("Either --motion_file or --wandb_path must be provided.")
+
+    if args_cli.no_debug_vis:
+        if hasattr(env_cfg, "commands") and hasattr(env_cfg.commands, "motion"):
+            env_cfg.commands.motion.debug_vis = False
+        if hasattr(env_cfg, "scene") and hasattr(env_cfg.scene, "contact_forces"):
+            env_cfg.scene.contact_forces.debug_vis = False
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
