@@ -2,7 +2,7 @@
 
 This repository is a NAO-focused extension of the original [BeyondMimic motion tracking code](https://github.com/HybridRobotics/whole_body_tracking). It keeps the Isaac Lab / RSL-RL training structure from BeyondMimic, while adding practical support for training and replaying GMR-retargeted NAO motions.
 
-The motion-retargeting side is designed to connect with [GMR: General Motion Retargeting](https://github.com/YanjieZe/GMR) and the related fork/reference used in this project, `https://github.com/Djctionary/GMR`. GMR provides humanoid motion retargeting tuned for RL tracking policies and supports conversion flows into BeyondMimic-style motion data.
+The motion-retargeting side is designed to connect with [GMR: General Motion Retargeting](https://github.com/YanjieZe/GMR) and the related fork/reference used in this project, [https://github.com/Djctionary/GMR](https://github.com/Djctionary/GMR). GMR provides humanoid motion retargeting tuned for RL tracking policies and supports conversion flows into BeyondMimic-style motion data.
 
 ## What Changed From Upstream BeyondMimic
 
