@@ -1,162 +1,195 @@
-# BeyondMimic Motion Tracking Code
+# NAO Whole-Body Tracking
 
-[![IsaacSim](https://img.shields.io/badge/IsaacSim-4.5.0-silver.svg)](https://docs.omniverse.nvidia.com/isaacsim/latest/overview.html)
-[![Isaac Lab](https://img.shields.io/badge/IsaacLab-2.1.0-silver)](https://isaac-sim.github.io/IsaacLab)
-[![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://docs.python.org/3/whatsnew/3.10.html)
-[![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/20.04/)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://pre-commit.com/)
-[![License](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/license/mit)
+This repository is a NAO-focused extension of the original [BeyondMimic motion tracking code](https://github.com/HybridRobotics/whole_body_tracking). It keeps the Isaac Lab / RSL-RL training structure from BeyondMimic, while adding practical support for training and replaying GMR-retargeted NAO motions.
 
-[[Website]](https://beyondmimic.github.io/)
-[[Arxiv]](https://arxiv.org/abs/2508.08241)
-[[Video]](https://youtu.be/RS_MtKVIAzY)
+The motion-retargeting side is designed to connect with [GMR: General Motion Retargeting](https://github.com/YanjieZe/GMR) and the related fork/reference used in this project, `https://github.com/Djctionary/GMR`. GMR provides humanoid motion retargeting tuned for RL tracking policies and supports conversion flows into BeyondMimic-style motion data.
 
-## Overview
+## What Changed From Upstream BeyondMimic
 
-BeyondMimic is a versatile humanoid control framework that provides highly dynamic motion tracking with the
-state-of-the-art motion quality on real-world deployment and steerable test-time control with guided diffusion-based
-controllers.
+| Area | Original BeyondMimic | This project |
+|---|---|---|
+| Main robot focus | G1 / humanoid tracking examples | Adds NAO tracking task and robot config |
+| Motion source | WandB registry-first motion loading | Supports local trainable NPZ motions with `--motion_file` |
+| Retargeting pipeline | General retargeted generalized-coordinate motions | NAO motions retargeted through GMR-compatible joint/body ordering |
+| NAO control | Not the primary target | 24 active NAO joints, passive hand/finger joints locked |
+| Reward design | Whole-body pose/velocity mimic rewards | Adds NAO wrist linear/angular velocity rewards |
+| Evaluation UX | Basic play script | Adds camera presets, debug-visual hiding, and play reset controls |
+| Documentation | Upstream project docs | Adds NAO run commands and three-sample training summary |
 
-This repo covers the motion tracking training in BeyondMimic. **You should be able to
-train any sim-to-real-ready motion in the LAFAN1 dataset, without tuning any parameters**.
+## Key Features
 
-For sim-to-sim and sim-to-real deployment, please refer to
-the [motion_tracking_controller](https://github.com/HybridRobotics/motion_tracking_controller).
-
-### Alternative Implementations
-
-- There is an alternative reproduction of BeyondMimic in [mjlab](https://github.com/mujocolab/mjlab), a new Isaac Lab-style manager API powered by MuJoCo-Warp for RL and robotics research. See the implementation [here](https://github.com/mujocolab/mjlab/blob/main/src/mjlab/tasks/tracking/tracking_env_cfg.py).
+- `Tracking-Flat-Nao-v0` task registration.
+- NAO URDF asset integration through Isaac Lab articulation config.
+- NAO-specific active joint list aligned with GMR/MJCF qpos order.
+- Passive hand/finger joints excluded from the policy and held at default pose.
+- NAO tracking body set with torso anchor, feet, arms, and wrists.
+- Wrist-specific velocity rewards for `l_wrist` and `r_wrist`.
+- Local motion training via `--motion_file` for trainable NPZ files.
+- Play-time camera controls: `--camera_view`, `--camera_eye`, `--camera_lookat`.
+- Play-time visualization controls: `--no_debug_vis`.
+- Play-time reset controls: `--termination_threshold_scale`, `--no_play_reset`.
+- TensorBoard/W&B summaries for Jensen, Zhihui, and Musk NAO training runs.
 
 ## Installation
 
-- Install Isaac Lab v2.1.0 by following
-  the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html). We recommend
-  using the conda installation as it simplifies calling Python scripts from the terminal.
+Install Isaac Sim / Isaac Lab as in the upstream BeyondMimic setup. This repo was developed against:
 
-- Clone this repository separately from the Isaac Lab installation (i.e., outside the `IsaacLab` directory):
+- Isaac Sim `4.5.0`
+- Isaac Lab `2.1.0`
+- Python `3.10`
+- Linux
 
-```bash
-# Option 1: SSH
-git clone git@github.com:HybridRobotics/whole_body_tracking.git
-
-# Option 2: HTTPS
-git clone https://github.com/HybridRobotics/whole_body_tracking.git
-```
-
-- Pull the robot description files from GCS
-
-```bash
-# Enter the repository
-cd whole_body_tracking
-# Rename all occurrences of whole_body_tracking (in files/directories) to your_fancy_extension_name
-curl -L -o unitree_description.tar.gz https://storage.googleapis.com/qiayuanl_robot_descriptions/unitree_description.tar.gz && \
-tar -xzf unitree_description.tar.gz -C source/whole_body_tracking/whole_body_tracking/assets/ && \
-rm unitree_description.tar.gz
-```
-
-- Using a Python interpreter that has Isaac Lab installed, install the library
+Then install this extension from the repository root:
 
 ```bash
 python -m pip install -e source/whole_body_tracking
 ```
 
-## Motion Tracking
+## GMR Connection
 
-### Motion Preprocessing & Registry Setup
+This project expects NAO motions to be retargeted before RL training. The intended upstream retargeting reference is GMR:
 
-In order to manage the large set of motions we used in this work, we leverage the WandB registry to store and load
-reference motions automatically.
-Note: The reference motion should be retargeted and use generalized coordinates only.
+- Canonical repo: https://github.com/YanjieZe/GMR
+- Project reference/fork: https://github.com/Djctionary/GMR
 
-- Gather the reference motion datasets (please follow the original licenses), we use the same convention as .csv of
-  Unitree's dataset
+The NAO robot config documents the GMR assumption directly: the 24 active NAO joints follow the GMR-retargeted `dof_pos` order, matching the MJCF qpos order after the free joint. The local `pkl_to_npz.py` path maps GMR-style pkl columns into Isaac Lab articulation joints by name.
 
-    - Unitree-retargeted LAFAN1 Dataset is available
-      on [HuggingFace](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset)
-    - Sidekicks are from [KungfuBot](https://kungfu-bot.github.io/)
-    - Christiano Ronaldo celebration is from [ASAP](https://github.com/LeCAR-Lab/ASAP).
-    - Balance motions are from [HuB](https://hub-robot.github.io/)
+Expected trainable motion location:
 
-
-- Log in to your WandB account; access Registry under Core on the left. Create a new registry collection with the name "
-  Motions" and artifact type "All Types".
-
-
-- Convert retargeted motions to include the maximum coordinates information (body pose, body velocity, and body
-  acceleration) via forward kinematics,
-
-```bash
-python scripts/csv_to_npz.py --input_file {motion_name}.csv --input_fps 30 --output_name {motion_name} --headless
+```text
+motions/trainable/nao/*.npz
 ```
 
-This will automatically upload the processed motion file to the WandB registry with output name {motion_name}.
+Example local motions used in this repo:
 
-- Test if the WandB registry works properly by replaying the motion in Isaac Sim:
-
-```bash
-python scripts/replay_npz.py --registry_name={your-organization}-org/wandb-registry-motions/{motion_name}
+```text
+Jensen_nao_gmr_velocity_stage3_wrist.npz
+Zhihui_nao_gmr_velocity_stage3_wrist.npz
+Musk_nao_gmr_velocity_stage3_wrist.npz
 ```
 
-- Debugging
-    - Make sure to export WANDB_ENTITY to your organization name, not your personal username.
-    - If /tmp folder is not accessible, modify csv_to_npz.py L319 & L326 to a temporary folder of your choice.
+## Training
 
-### Policy Training
-
-- Train policy by the following command:
+Example NAO training command:
 
 ```bash
-python scripts/rsl_rl/train.py --task=Tracking-Flat-G1-v0 \
---registry_name {your-organization}-org/wandb-registry-motions/{motion_name} \
---headless --logger wandb --log_project_name {project_name} --run_name {run_name}
+python scripts/rsl_rl/train.py \
+  --task Tracking-Flat-Nao-v0 \
+  --motion_file "motions/trainable/nao/Musk_nao_gmr_velocity_stage3_wrist.npz" \
+  --max_iterations 10000 \
+  --num_envs 128 \
+  --headless \
+  --logger wandb \
+  --video \
+  --video_interval 5000 \
+  --video_length 600
 ```
 
-### Policy Evaluation
+For larger runs, increase `--num_envs` and `--max_iterations` as appropriate.
 
-- Play the trained policy by the following command:
+Optional naming:
 
 ```bash
-python scripts/rsl_rl/play.py --task=Tracking-Flat-G1-v0 --num_envs=2 --wandb_path={wandb-run-path}
+--log_project_name BeyondMimic --run_name nao-musk-stage3-wrist-iter10000-env128
 ```
 
-The WandB run path can be located in the run overview. It follows the format {your_organization}/{project_name}/ along
-with a unique 8-character identifier. Note that run_name is different from run_path.
+## Play / Evaluation
 
-## Code Structure
+Play a local checkpoint:
 
-Below is an overview of the code structure for this repository:
+```bash
+python scripts/rsl_rl/play.py \
+  --task Tracking-Flat-Nao-v0 \
+  --motion_file "motions/trainable/nao/Musk_nao_gmr_velocity_stage3_wrist.npz" \
+  --num_envs 1 \
+  --load_run 2026-06-03_01-43-39 \
+  --checkpoint model_9999.pt \
+  --camera_view front \
+  --no_debug_vis \
+  --video \
+  --video_length 600 \
+  --headless
+```
 
-- **`source/whole_body_tracking/whole_body_tracking/tasks/tracking/mdp`**
-  This directory contains the atomic functions to define the MDP for BeyondMimic. Below is a breakdown of the functions:
+Useful play options:
 
-    - **`commands.py`**
-      Command library to compute relevant variables from the reference motion, current robot state, and error
-      computations. This includes pose and velocity error calculation, initial state randomization, and adaptive
-      sampling.
+| Option | Purpose |
+|---|---|
+| `--camera_view front` | Front-facing NAO replay camera. |
+| `--camera_view back,left,right,iso` | Other camera presets. |
+| `--camera_eye X Y Z` | Manual camera eye override. |
+| `--camera_lookat X Y Z` | Manual camera target override. |
+| `--no_debug_vis` | Hide robot/reference frame markers and contact debug visuals. |
+| `--termination_threshold_scale 2.0` | Relax non-timeout reset thresholds during play. |
+| `--no_play_reset` | Disable play-time terminations, including timeout and fall/reset checks. |
 
-    - **`rewards.py`**
-      Implements the DeepMimic reward functions and smoothing terms.
+## TensorBoard
 
-    - **`events.py`**
-      Implements domain randomization terms.
+View all NAO runs:
 
-    - **`observations.py`**
-      Implements observation terms for motion tracking and data collection.
+```bash
+tensorboard --logdir logs/rsl_rl/nao_flat --host 0.0.0.0 --port 6006
+```
 
-    - **`terminations.py`**
-      Implements early terminations and timeouts.
+Then open:
 
-- **`source/whole_body_tracking/whole_body_tracking/tasks/tracking/tracking_env_cfg.py`**
-  Contains the environment (MDP) hyperparameters configuration for the tracking task.
+```text
+http://localhost:6006
+```
 
-- **`source/whole_body_tracking/whole_body_tracking/tasks/tracking/config/g1/agents/rsl_rl_ppo_cfg.py`**
-  Contains the PPO hyperparameters for the tracking task.
+or, on a remote server:
 
-- **`source/whole_body_tracking/whole_body_tracking/robots`**
-  Contains robot-specific settings, including armature parameters, joint stiffness/damping calculation, and action scale
-  calculation.
+```text
+http://<server-ip>:6006
+```
 
-- **`scripts`**
-  Includes utility scripts for preprocessing motion data, training policies, and evaluating trained policies.
+## Current NAO Results
 
-This structure is designed to ensure modularity and ease of navigation for developers expanding the project.
+Three local `velocity_stage3_wrist` samples were trained for 10000 iterations each. TensorBoard contains scalar data through step `9999` for all three runs.
+
+| Sample | Motion duration | Run | Final reward | Peak reward | Final episode length | Conclusion |
+|---|---:|---|---:|---:|---:|---|
+| Jensen | 7.00s | `2026-06-03_01-37-15` | 15.27 | 19.60 | 219.18 | Most stable final tracking. |
+| Zhihui | 9.68s | `2026-06-03_01-42-50` | 16.10 | 23.33 | 217.78 | Strong peak around `model_6000.pt`, final regresses. |
+| Musk | 6.58s | `2026-06-03_01-43-39` | 16.85 | 23.62 | 219.06 | Highest reward, but higher reset risk. |
+
+Summary:
+
+- Jensen is the best stable baseline.
+- Musk is the best high-reward / expressive candidate, but should be checked with relaxed play resets.
+- Zhihui should be evaluated around `model_6000.pt`, not only `model_9999.pt`.
+
+Detailed metrics are in:
+
+```text
+docs/NAO_STAGE3_WRIST_TRAINING_SUMMARY.md
+```
+
+## Project Structure
+
+```text
+scripts/
+  rsl_rl/train.py                  # RSL-RL training entrypoint
+  rsl_rl/play.py                   # Policy replay/export with NAO-friendly play controls
+  pkl_to_npz.py                    # GMR-style pkl to trainable NPZ conversion path
+  replay_npz.py                    # Motion replay utility
+
+source/whole_body_tracking/whole_body_tracking/
+  robots/nao.py                    # NAO robot, joint mapping, actuators, tracked bodies
+  tasks/tracking/config/nao/       # Tracking-Flat-Nao-v0 task and PPO config
+  tasks/tracking/tracking_env_cfg.py
+  tasks/tracking/mdp/              # Commands, rewards, observations, events, terminations
+
+docs/
+  COMMANDS_MIMIC_TRAINABLE.md
+  NAO_STAGE3_WRIST_TRAINING_SUMMARY.md
+```
+
+## Notes
+
+This is not a clean upstream BeyondMimic clone. It is a working NAO adaptation that preserves the BeyondMimic training core while adding the robot mapping, local data path, wrist-focused rewards, and evaluation controls needed for GMR-retargeted NAO motions.
+
+Please cite or reference the original projects when using this work:
+
+- BeyondMimic: https://github.com/HybridRobotics/whole_body_tracking
+- GMR: https://github.com/YanjieZe/GMR

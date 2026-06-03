@@ -1,3 +1,4 @@
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
@@ -8,6 +9,7 @@ from whole_body_tracking.robots.nao import (
     NAO_JOINT_NAMES,
     NAO_TRACKING_BODY_NAMES,
 )
+import whole_body_tracking.tasks.tracking.mdp as mdp
 from whole_body_tracking.tasks.tracking.tracking_env_cfg import TrackingEnvCfg
 
 
@@ -36,6 +38,18 @@ class NaoFlatEnvCfg(TrackingEnvCfg):
         # — the small (+-0.01 rad) calibration noise is not critical for the
         # tracking policy.
         self.events.add_joint_default_pos.params["pos_distribution_params"] = None
+
+        wrist_body_names = ["l_wrist", "r_wrist"]
+        self.rewards.motion_wrist_lin_vel = RewTerm(
+            func=mdp.motion_global_body_linear_velocity_error_exp,
+            weight=2.0,
+            params={"command_name": "motion", "std": 1.0, "body_names": wrist_body_names},
+        )
+        self.rewards.motion_wrist_ang_vel = RewTerm(
+            func=mdp.motion_global_body_angular_velocity_error_exp,
+            weight=2.0,
+            params={"command_name": "motion", "std": 3.14, "body_names": wrist_body_names},
+        )
 
         # Penalize undesired contacts on every body except the feet and wrists.
         self.rewards.undesired_contacts.params["sensor_cfg"] = SceneEntityCfg(

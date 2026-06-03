@@ -21,10 +21,45 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--motion_file", type=str, default=None, help="Path to the motion file.")
 parser.add_argument(
+    "--camera_view",
+    type=str,
+    default=None,
+    choices=("front", "back", "left", "right", "iso"),
+    help="Viewer camera preset relative to the robot asset root.",
+)
+parser.add_argument(
+    "--camera_eye",
+    type=float,
+    nargs=3,
+    default=None,
+    metavar=("X", "Y", "Z"),
+    help="Override viewer camera eye position relative to the robot asset root.",
+)
+parser.add_argument(
+    "--camera_lookat",
+    type=float,
+    nargs=3,
+    default=None,
+    metavar=("X", "Y", "Z"),
+    help="Override viewer camera look-at position relative to the robot asset root.",
+)
+parser.add_argument(
+    "--termination_threshold_scale",
+    type=float,
+    default=None,
+    help="Scale non-timeout termination thresholds during play. Example: 2.0 doubles fall/reset tolerances.",
+)
+parser.add_argument(
+    "--no_play_reset",
+    action="store_true",
+    default=False,
+    help="Disable all play-time terminations, including fall/reset checks and timeout.",
+)
+parser.add_argument(
     "--no_debug_vis",
     action="store_true",
     default=False,
-    help="Disable motion-command frame markers and contact-sensor debug visualization.",
+    help="Disable robot/reference motion frame markers and contact-sensor debug visualization.",
 )
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -66,6 +101,49 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 # Import extensions to set up environment tasks
 import whole_body_tracking.tasks  # noqa: F401
 from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx
+
+
+CAMERA_PRESETS = {
+    "front": {"eye": (0.0, 1.6, 0.15), "lookat": (0.0, 0.0, -0.02)},
+    "back": {"eye": (0.0, -1.5, 0.5), "lookat": (0.0, 0.0, 0.25)},
+    "left": {"eye": (-1.5, 0.0, 0.45), "lookat": (0.0, 0.0, 0.28)},
+    "right": {"eye": (1.5, 0.0, 0.45), "lookat": (0.0, 0.0, 0.28)},
+    "iso": {"eye": (1.2, 1.2, 0.8), "lookat": (0.0, 0.0, 0.28)},
+}
+
+
+def configure_viewer_camera(env_cfg, args_cli):
+    """Apply play-time camera overrides without changing task defaults."""
+    if args_cli.camera_view is None and args_cli.camera_eye is None and args_cli.camera_lookat is None:
+        return
+
+    env_cfg.viewer.origin_type = "asset_root"
+    env_cfg.viewer.asset_name = "robot"
+
+    if args_cli.camera_view is not None:
+        preset = CAMERA_PRESETS[args_cli.camera_view]
+        env_cfg.viewer.eye = preset["eye"]
+        env_cfg.viewer.lookat = preset["lookat"]
+
+    if args_cli.camera_eye is not None:
+        env_cfg.viewer.eye = tuple(args_cli.camera_eye)
+    if args_cli.camera_lookat is not None:
+        env_cfg.viewer.lookat = tuple(args_cli.camera_lookat)
+
+
+def configure_play_terminations(env_cfg, args_cli):
+    """Apply play-time termination overrides without changing task defaults."""
+    if args_cli.termination_threshold_scale is not None:
+        if args_cli.termination_threshold_scale <= 0.0:
+            raise ValueError("--termination_threshold_scale must be positive.")
+        for term_name in ("anchor_pos", "anchor_ori", "ee_body_pos"):
+            term_cfg = getattr(env_cfg.terminations, term_name, None)
+            if term_cfg is not None and "threshold" in term_cfg.params:
+                term_cfg.params["threshold"] *= args_cli.termination_threshold_scale
+
+    if args_cli.no_play_reset:
+        for term_name in tuple(env_cfg.terminations.__dict__.keys()):
+            setattr(env_cfg.terminations, term_name, None)
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -126,6 +204,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             env_cfg.commands.motion.debug_vis = False
         if hasattr(env_cfg, "scene") and hasattr(env_cfg.scene, "contact_forces"):
             env_cfg.scene.contact_forces.debug_vis = False
+
+    configure_viewer_camera(env_cfg, args_cli)
+    configure_play_terminations(env_cfg, args_cli)
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
